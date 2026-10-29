@@ -1,0 +1,133 @@
+# Pdroid: transforma o GameNative (GPL-3.0) no Pdroid e compila o APK na nuvem.
+# Como usar: aba "Actions" do seu fork > "Gerar Pdroid" > "Run workflow".
+# O APK aparece em "Releases" do seu repositório quando terminar.
+name: Gerar Pdroid
+
+on:
+  workflow_dispatch:
+    inputs:
+      variante:
+        description: "Modern = Android 10 ou mais novo (recomendado). Legacy = Android 8/9."
+        type: choice
+        options: [Modern, Legacy]
+        default: Modern
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Manter a mesma assinatura entre builds
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: pdroid-keystore-v1
+
+      - name: Configuração sem chaves de telemetria
+        run: |
+          cat > local.properties <<'EOF'
+          POSTHOG_API_KEY=
+          POSTHOG_HOST=https://us.i.posthog.com
+          EOF
+
+      - name: Aplicar a identidade do Pdroid
+        run: |
+          set -e
+          # Nome do app em todos os idiomas
+          for f in app/src/main/res/values*/strings.xml; do
+            sed -i -E 's#(<string name="(app_name|login_app_name)">)[^<]*(</string>)#\1Pdroid\3#' "$f"
+          done
+
+          # Cores do tema: noite da montanha, sinalizador laranja e corda amarela
+          C=app/src/main/java/app/gamenative/ui/theme/Color.kt
+          sed -i \
+            -e 's/0xFF09090B/0xFF0B111C/g' \
+            -e 's/0xFF12121A/0xFF141F31/g' \
+            -e 's/0xFF1A1A24/0xFF1B2940/g' \
+            -e 's/0xFF27272A/0xFF22314A/g' \
+            -e 's/0xFFA21CAF/0xFFFF7A3D/g' \
+            -e 's/0xFF06B6D4/0xFFF6C453/g' \
+            -e 's/0xFF00D4FF/0xFFF6C453/g' \
+            -e 's/0xFF8B5CF6/0xFFFF7A3D/g' \
+            -e 's/0xFF3A3A4A/0xFF2E3F5C/g' \
+            -e 's/0xFF94969C/0xFF93A6BB/g' \
+            "$C"
+          sed -i \
+            -e 's/#09090B/#0B111C/I' \
+            -e 's/#a21caf/#FF7A3D/I' \
+            -e 's/#06B6D4/#F6C453/I' \
+            app/src/main/res/values/colors.xml
+
+          # Ícone: montanha nevada com bandeira no pico
+          cat > app/src/main/res/drawable/ic_launcher_background.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:aapt="http://schemas.android.com/aapt"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:pathData="M0,0h108v108h-108z">
+                  <aapt:attr name="android:fillColor">
+                      <gradient android:type="linear" android:startX="54" android:startY="0"
+                          android:endX="54" android:endY="108">
+                          <item android:offset="0" android:color="#FF1A2440"/>
+                          <item android:offset="0.55" android:color="#FF6A4A6E"/>
+                          <item android:offset="1" android:color="#FFFF9A5C"/>
+                      </gradient>
+                  </aapt:attr>
+              </path>
+          </vector>
+          EOF
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#FF2C3556" android:pathData="M18,82 L40,52 L50,64 L62,46 L90,82 Z"/>
+              <path android:fillColor="#FFF1F5F9" android:pathData="M26,82 L50,38 L58,50 L66,42 L84,82 Z"/>
+              <path android:fillColor="#FF141F31" android:pathData="M50,38 L55,47 L51,46 L47,49 Z"/>
+              <path android:fillColor="#FF141F31" android:pathData="M0,108 L0,84 L30,82 L52,60 L60,70 L68,62 L82,82 L108,84 L108,108 Z"/>
+              <path android:strokeColor="#FFF1F5F9" android:strokeWidth="2.2" android:pathData="M50,39 L50,22"/>
+              <path android:fillColor="#FFFF7A3D" android:pathData="M50,22 L63,26 L50,31 Z"/>
+          </vector>
+          EOF
+
+          # Versão identificada como Pdroid
+          sed -i -E 's/versionName = "([^"]+)"/versionName = "\1-pdroid"/' app/build.gradle.kts
+          grep -n 'versionName' app/build.gradle.kts | head -1
+
+      - name: Compilar o APK (${{ inputs.variante }})
+        run: ./gradlew :app:assemble${{ inputs.variante }}Release --stacktrace
+
+      - name: Renomear o APK
+        id: apk
+        run: |
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          mkdir -p saida
+          cp "$APK" "saida/Pdroid-${{ inputs.variante }}.apk"
+          echo "tag=pdroid-$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+          ls -lh saida
+
+      - name: Publicar em Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.apk.outputs.tag }}
+          name: Pdroid ${{ steps.apk.outputs.tag }} (${{ inputs.variante }})
+          body: |
+            APK do Pdroid gerado automaticamente a partir do GameNative (GPL-3.0).
+            Baixe o arquivo .apk abaixo no tablet e instale.
+          files: saida/*.apk
