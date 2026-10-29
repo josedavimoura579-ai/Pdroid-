@@ -115,6 +115,49 @@ jobs:
           sed -i -E 's/versionName = "([^"]+)"/versionName = "\1-pdroid"/' app/build.gradle.kts
           grep -n 'versionName' app/build.gradle.kts | head -1
 
+      - name: Modo PEAK (só o PEAK, sem outras lojas)
+        run: |
+          python3 - <<'PY'
+          import re, pathlib
+
+          def patch(path, old, new, count=1):
+              p = pathlib.Path(path)
+              s = p.read_text(encoding="utf-8")
+              assert s.count(old) >= 1, f"Trecho não encontrado em {path}: {old[:60]}"
+              p.write_text(s.replace(old, new, count), encoding="utf-8")
+              print("ok:", path)
+
+          VM = "app/src/main/java/app/gamenative/ui/model/LibraryViewModel.kt"
+          # Biblioteca Steam mostra apenas o PEAK (App ID 3527290)
+          patch(VM, "filteredSteamApps.map { item ->",
+                    "filteredSteamApps.filter { it.id == 3527290 }.map { item ->")
+          # Sem jogos recomendados no topo da lista
+          patch(VM, "if (PrefManager.showRecommendations\n",
+                    "if (false && PrefManager.showRecommendations\n")
+
+          # Abas: só "PEAK" e "Versões importadas"
+          patch("app/src/main/java/app/gamenative/ui/enums/LibraryTab.kt",
+                "get() = entries.toList()", "get() = listOf(ALL, LOCAL)")
+
+          # Nomes das abas
+          for f, all_, local in [
+              ("app/src/main/res/values/strings.xml", "PEAK", "Imported versions"),
+              ("app/src/main/res/values-pt-rBR/strings.xml", "PEAK", "Versões importadas"),
+          ]:
+              p = pathlib.Path(f); s = p.read_text(encoding="utf-8")
+              s = re.sub(r'(<string name="tab_all">)[^<]*(</string>)', rf'\g<1>{all_}\g<2>', s)
+              s = re.sub(r'(<string name="tab_local">)[^<]*(</string>)', rf'\g<1>{local}\g<2>', s)
+              p.write_text(s, encoding="utf-8"); print("ok:", f)
+
+          # App mais leve: só português e inglês
+          G = "app/build.gradle.kts"
+          s = pathlib.Path(G).read_text(encoding="utf-8")
+          s2 = re.sub(r'resourceConfigurations \+= listOf\([^)]*\)',
+                      'resourceConfigurations += listOf("en", "pt-rBR")', s, flags=re.S)
+          assert s2 != s, "resourceConfigurations não encontrado"
+          pathlib.Path(G).write_text(s2, encoding="utf-8"); print("ok:", G)
+          PY
+
       - name: Instalar ferramentas do Android
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
