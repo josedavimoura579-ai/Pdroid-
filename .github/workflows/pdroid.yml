@@ -20,6 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Liberar espaço em disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          df -h /
+
       - name: Baixar o código
         uses: actions/checkout@v4
 
@@ -110,8 +115,21 @@ jobs:
           sed -i -E 's/versionName = "([^"]+)"/versionName = "\1-pdroid"/' app/build.gradle.kts
           grep -n 'versionName' app/build.gradle.kts | head -1
 
+      - name: Instalar ferramentas do Android
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --install "build-tools;34.0.0" > /dev/null
+
       - name: Compilar o APK (${{ inputs.variante }})
-        run: ./gradlew :app:assemble${{ inputs.variante }}Release --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:assemble${{ inputs.variante }}Release 2>&1 | tee build.log
+
+      - name: Mostrar o erro resumido
+        if: failure()
+        run: |
+          echo "=========== ERRO (copie daqui) ==========="
+          grep -n -A 25 "What went wrong" build.log || grep -n -B 2 -A 10 "error:\|e: " build.log | head -80
 
       - name: Renomear o APK
         id: apk
